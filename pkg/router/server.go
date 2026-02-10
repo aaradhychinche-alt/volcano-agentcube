@@ -24,8 +24,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/volcano-sh/agentcube/pkg/router/auth"
 	"github.com/volcano-sh/agentcube/pkg/store"
@@ -112,10 +112,10 @@ func NewServer(config *Config) (*Server, error) {
 // initAuth creates the Kubernetes client, token cache, authenticator, and
 // HMAC session validator.
 func (s *Server) initAuth() error {
-	// Build Kubernetes client from in-cluster config.
-	restConfig, err := rest.InClusterConfig()
+	// Build Kubernetes client from config (supports both in-cluster and local kubeconfig)
+	restConfig, err := ctrl.GetConfig()
 	if err != nil {
-		return fmt.Errorf("failed to get in-cluster config: %w", err)
+		return fmt.Errorf("failed to get kubernetes config: %w", err)
 	}
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
