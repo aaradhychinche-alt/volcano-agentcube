@@ -29,6 +29,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/volcano-sh/agentcube/pkg/common/types"
+	"github.com/volcano-sh/agentcube/pkg/router/auth"
 )
 
 // handleHealthLive handles liveness probe
@@ -163,11 +164,21 @@ func (s *Server) forwardToSandbox(c *gin.Context, sandbox *types.SandboxInfo, pa
 	var jwtToken string
 	if sandbox.Kind == types.SandboxClaimsKind || sandbox.Kind == types.SandboxKind {
 		// Generate JWT token before setting up Director
-		// Include session ID in claims for debugging and request tracking
+		// Include session ID and sandbox-scoped claims for PicoD validation
 		if s.jwtManager != nil {
 			claims := map[string]interface{}{
-				"session_id": sandbox.SessionID,
+				"session_id":   sandbox.SessionID,
+				"sandbox_id":   sandbox.SandboxID,
+				"namespace":    sandbox.SandboxNamespace,
+				"sandbox_name": sandbox.Name,
 			}
+
+			// Include authenticated user identity if available.
+			if identity := auth.IdentityFromContext(c.Request.Context()); identity != nil {
+				claims["user_identity"] = identity.Username
+				claims["user_namespace"] = identity.Namespace
+			}
+
 			token, err := s.jwtManager.GenerateToken(claims)
 			if err != nil {
 				klog.Errorf("Failed to generate JWT token (session: %s): %v", sandbox.SessionID, err)

@@ -43,8 +43,11 @@ const (
 // AuthManager manages RSA public key authentication
 // The public key is loaded from environment variable at startup
 type AuthManager struct {
-	publicKey *rsa.PublicKey
-	mutex     sync.RWMutex
+	publicKey           *rsa.PublicKey
+	mutex               sync.RWMutex
+	expectedSandboxID   string // Expected sandbox_id claim (from env)
+	expectedNamespace   string // Expected namespace claim (from env)
+	expectedSandboxName string // Expected sandbox_name claim (from env)
 }
 
 // NewAuthManager creates a new auth manager
@@ -83,8 +86,26 @@ func (am *AuthManager) LoadPublicKeyFromEnv() error {
 	return nil
 }
 
-// AuthMiddleware creates authentication middleware with JWT verification
-// Note: Public key must be loaded at startup (via LoadPublicKeyFromEnv), so we don't check here
+// LoadExpectedClaims loads sandbox identity from environment variables.
+// These are used to validate that JWTs are scoped to THIS specific sandbox.
+func (am *AuthManager) LoadExpectedClaims() {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
+	am.expectedSandboxID = os.Getenv("SANDBOX_ID")
+	am.expectedNamespace = os.Getenv("SANDBOX_NAMESPACE")
+	am.expectedSandboxName = os.Getenv("SANDBOX_NAME")
+
+	if am.expectedSandboxID != "" {
+		klog.Infof("PicoD sandbox identity: sandbox_id=%s namespace=%s name=%s",
+			am.expectedSandboxID, am.expectedNamespace, am.expectedSandboxName)
+	} else {
+		klog.Warning("SANDBOX_ID not set - sandbox-scoped JWT validation disabled (backward compatibility mode)")
+	}
+}
+
+// AuthMiddleware creates authentication middleware with JWT verification.
+// Validates both signature and sandbox-scoped claims if configured.
 func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -129,6 +150,51 @@ func (am *AuthManager) AuthMiddleware() gin.HandlerFunc {
 			})
 			c.Abort()
 			return
+		}
+
+		// Validate sandbox-scoped claims if expected values are configured.
+		am.mutex.RLock()
+		expectedSandboxID := am.expectedSandboxID
+		expectedNamespace := am.expectedNamespace
+		am.mutex.RUnlock()
+
+		if expectedSandboxID != "" {
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error":  "Invalid token claims",
+					"code":   http.StatusUnauthorized,
+					"detail": "Unable to parse JWT claims",
+				})
+				c.Abort()
+				return
+			}
+
+			// Validate sandbox_id claim
+			sandboxID, _ := claims["sandbox_id"].(string)
+			if sandboxID != expectedSandboxID {
+				klog.Warningf("JWT sandbox_id mismatch: expected=%s got=%s", expectedSandboxID, sandboxID)
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":  "Token not valid for this sandbox",
+					"code":   http.StatusForbidden,
+					"detail": "JWT sandbox_id claim does not match",
+				})
+				c.Abort()
+				return
+			}
+
+			// Validate namespace claim
+			namespace, _ := claims["namespace"].(string)
+			if namespace != expectedNamespace {
+				klog.Warningf("JWT namespace mismatch: expected=%s got=%s", expectedNamespace, namespace)
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":  "Token not valid for this sandbox",
+					"code":   http.StatusForbidden,
+					"detail": "JWT namespace claim does not match",
+				})
+				c.Abort()
+				return
+			}
 		}
 
 		// Enforce maximum body size to prevent memory exhaustion

@@ -18,10 +18,12 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -36,6 +38,9 @@ func main() {
 		tlsKey                = flag.String("tls-key", "", "Path to TLS key file")
 		debug                 = flag.Bool("debug", false, "Enable debug mode")
 		maxConcurrentRequests = flag.Int("max-concurrent-requests", 1000, "Maximum number of concurrent requests that a router server can handle (0 = unlimited)")
+		enableAuth            = flag.Bool("enable-auth", true, "Enable mandatory authentication and authorization (secure by default)")
+		tokenCacheSize        = flag.Int("token-cache-size", 10000, "Maximum entries in the sharded token cache")
+		tokenCacheTTL         = flag.Duration("token-cache-ttl", 5*time.Minute, "Time-to-live for token cache entries")
 	)
 
 	// Initialize klog flags
@@ -43,6 +48,17 @@ func main() {
 
 	// Parse command line flags
 	flag.Parse()
+
+	// Load HMAC key from environment variable
+	var hmacKey []byte
+	if secret := os.Getenv("AGENTCUBE_SESSION_SECRET"); secret != "" {
+		var err error
+		hmacKey, err = hex.DecodeString(secret)
+		if err != nil {
+			// Fall back to raw bytes if not valid hex
+			hmacKey = []byte(secret)
+		}
+	}
 
 	// Create Router API server configuration
 	config := &router.Config{
@@ -52,6 +68,10 @@ func main() {
 		TLSCert:               *tlsCert,
 		TLSKey:                *tlsKey,
 		MaxConcurrentRequests: *maxConcurrentRequests,
+		EnableAuth:            *enableAuth,
+		TokenCacheSize:        *tokenCacheSize,
+		TokenCacheTTL:         *tokenCacheTTL,
+		SessionHMACKey:        hmacKey,
 	}
 
 	// Create Router API server

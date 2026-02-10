@@ -356,6 +356,21 @@ func buildSandboxByCodeInterpreter(namespace string, codeInterpreterName string,
 			Name:  "PICOD_AUTH_PUBLIC_KEY",
 			Value: GetCachedPublicKey(),
 		})
+		// Inject sandbox identity for JWT claim validation.
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name:  "SANDBOX_ID",
+				Value: sandboxName, // This becomes the sandbox ID
+			},
+			corev1.EnvVar{
+				Name:  "SANDBOX_NAMESPACE",
+				Value: namespace,
+			},
+			corev1.EnvVar{
+				Name:  "SANDBOX_NAME",
+				Value: codeInterpreterName,
+			},
+		)
 	}
 
 	podSpec := corev1.PodSpec{

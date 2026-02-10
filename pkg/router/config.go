@@ -16,6 +16,8 @@ limitations under the License.
 
 package router
 
+import "time"
+
 // LastActivityAnnotationKey is the annotation key for tracking last activity
 const LastActivityAnnotationKey = "agentcube.volcano.sh/last-activity"
 
@@ -38,4 +40,21 @@ type Config struct {
 
 	// MaxConcurrentRequests limits the number of concurrent requests (0 = unlimited)
 	MaxConcurrentRequests int
+
+	// EnableAuth enables mandatory authentication and authorization.
+	// Defaults to true (secure by default). Setting to false is only
+	// permitted in development/testing environments.
+	EnableAuth bool
+
+	// TokenCacheSize is the maximum number of entries in the sharded token cache.
+	// Default: 10000
+	TokenCacheSize int
+
+	// TokenCacheTTL is the time-to-live for cached token validation results.
+	// Default: 5m
+	TokenCacheTTL time.Duration
+
+	// SessionHMACKey is the HMAC secret key for session ownership binding.
+	// Must be at least 32 bytes. Required when EnableAuth is true.
+	SessionHMACKey []byte
 }

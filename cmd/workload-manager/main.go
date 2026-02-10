@@ -57,7 +57,7 @@ func main() {
 		enableTLS        = flag.Bool("enable-tls", false, "Enable TLS (HTTPS)")
 		tlsCert          = flag.String("tls-cert", "", "Path to TLS certificate file")
 		tlsKey           = flag.String("tls-key", "", "Path to TLS key file")
-		enableAuth       = flag.Bool("enable-auth", false, "Enable Authentication")
+		enableAuth       = flag.Bool("enable-auth", true, "Enable Authentication (MANDATORY, cannot be disabled in production)")
 	)
 
 	// Initialize klog flags
@@ -94,6 +94,11 @@ func main() {
 	if err := setupControllers(mgr, sandboxReconciler, codeInterpreterReconciler); err != nil {
 		fmt.Fprintf(os.Stderr, "unable to setup controllers: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Validate auth configuration: authentication cannot be disabled.
+	if !*enableAuth {
+		klog.Fatal("--enable-auth=false is not supported. Authentication is mandatory for production security.")
 	}
 
 	// Create API server configuration

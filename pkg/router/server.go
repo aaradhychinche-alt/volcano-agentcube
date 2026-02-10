@@ -23,20 +23,26 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
+	"github.com/volcano-sh/agentcube/pkg/router/auth"
 	"github.com/volcano-sh/agentcube/pkg/store"
 )
 
 // Server is the main structure for Router apiserver
 type Server struct {
-	config         *Config
-	engine         *gin.Engine
-	httpServer     *http.Server
-	sessionManager SessionManager
-	storeClient    store.Store
-	httpTransport  *http.Transport // Reusable HTTP transport for connection pooling
-	jwtManager     *JWTManager     // JWT manager for signing requests to sandboxes
+	config           *Config
+	engine           *gin.Engine
+	httpServer       *http.Server
+	sessionManager   SessionManager
+	storeClient      store.Store
+	httpTransport    *http.Transport // Reusable HTTP transport for connection pooling
+	jwtManager       *JWTManager     // JWT manager for signing requests to sandboxes
+	authenticator    auth.Authenticator
+	sessionValidator auth.SessionValidator
+	tokenCache       *auth.ShardedTokenCache
 }
 
 // NewServer creates a new Router API server instance
@@ -76,6 +82,13 @@ func NewServer(config *Config) (*Server, error) {
 		httpTransport:  httpTransport,
 	}
 
+	// Initialize authentication & session binding when auth is enabled.
+	if config.EnableAuth {
+		if err := server.initAuth(); err != nil {
+			return nil, fmt.Errorf("failed to initialize auth: %w", err)
+		}
+	}
+
 	// Initialize JWT manager for signing requests to sandboxes
 	jwtManager, err := NewJWTManager()
 	if err != nil {
@@ -94,6 +107,45 @@ func NewServer(config *Config) (*Server, error) {
 	server.setupRoutes()
 
 	return server, nil
+}
+
+// initAuth creates the Kubernetes client, token cache, authenticator, and
+// HMAC session validator.
+func (s *Server) initAuth() error {
+	// Build Kubernetes client from in-cluster config.
+	restConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+
+	// Build sharded token cache.
+	var cacheOpts []auth.TokenCacheOption
+	if s.config.TokenCacheSize > 0 {
+		cacheOpts = append(cacheOpts, auth.WithMaxEntries(s.config.TokenCacheSize))
+	}
+	if s.config.TokenCacheTTL > 0 {
+		cacheOpts = append(cacheOpts, auth.WithTTL(s.config.TokenCacheTTL))
+	}
+	s.tokenCache = auth.NewShardedTokenCache(cacheOpts...)
+
+	// Create authenticator.
+	s.authenticator = auth.NewKubernetesAuthenticator(clientset, s.tokenCache)
+
+	// Create HMAC session validator.
+	if len(s.config.SessionHMACKey) > 0 {
+		validator, err := auth.NewHMACSessionValidator(s.config.SessionHMACKey)
+		if err != nil {
+			return fmt.Errorf("failed to create session validator: %w", err)
+		}
+		s.sessionValidator = validator
+	}
+
+	klog.Info("Router authentication initialized")
+	return nil
 }
 
 // concurrencyLimitMiddleware limits the number of concurrent requests
@@ -128,11 +180,20 @@ func (s *Server) setupRoutes() {
 	s.engine.GET("/health/live", s.handleHealthLive)
 	s.engine.GET("/health/ready", s.handleHealthReady)
 
-	// API v1 routes with concurrency limiting
+	// API v1 routes with middleware chain:
+	//   1. Logger + Recovery (crash safety)
+	//   2. Authentication (if enabled)
+	//   3. Namespace Authorization (if enabled)
+	//   4. Concurrency Limiting
 	v1 := s.engine.Group("/v1")
-	// Add middleware
 	v1.Use(gin.Logger())
 	v1.Use(gin.Recovery())
+
+	// Insert auth middleware before concurrency limit when auth is enabled.
+	if s.config.EnableAuth && s.authenticator != nil {
+		v1.Use(auth.AuthenticationMiddleware(s.authenticator))
+		v1.Use(auth.NamespaceAuthorizationMiddleware())
+	}
 
 	v1.Use(s.concurrencyLimitMiddleware()) // Apply concurrency limit to API routes
 

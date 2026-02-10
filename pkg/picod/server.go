@@ -79,6 +79,9 @@ func NewServer(config Config) *Server {
 		klog.Fatalf("Failed to load public key from environment: %v", err)
 	}
 
+	// Load expected sandbox identity claims from environment (optional for backward compat)
+	s.authManager.LoadExpectedClaims()
+
 	// API route group (Authenticated)
 	api := engine.Group("/api")
 	api.Use(s.authManager.AuthMiddleware())

@@ -76,12 +76,9 @@ const (
 	contextKeyNamespace          contextKey = "namespace"
 )
 
-// authMiddleware provides service account token authentication middleware
+// authMiddleware provides service account token authentication middleware.
+// Authentication is MANDATORY and cannot be bypassed (secure by default).
 func (s *Server) authMiddleware(c *gin.Context) {
-	if !s.config.EnableAuth {
-		c.Next()
-		return
-	}
 	// Extract token from Authorization header
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
