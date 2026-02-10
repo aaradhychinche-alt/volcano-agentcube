@@ -1,0 +1,44 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-direct-wlm-access
+  namespace: agentcube-system
+spec:
+  # Select Workload Manager deployment
+  podSelector:
+    matchLabels:
+      app: workload-manager
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow access ONLY from Router pods
+  - from:
+    - podSelector:
+        matchLabels:
+          app: agentcube-router
+    ports:
+    - protocol: TCP
+      port: 8080 # Workload Manager API port
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-direct-picod-access
+  namespace: agentcube-system
+spec:
+  # Select PicoD runtime pods
+  podSelector:
+    matchLabels:
+      app: agent-runtime
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow access ONLY from Router pods
+  - from:
+    - podSelector:
+        matchLabels:
+          app: agentcube-router
+    ports:
+    - protocol: TCP
+      port: 8080 # PicoD API port

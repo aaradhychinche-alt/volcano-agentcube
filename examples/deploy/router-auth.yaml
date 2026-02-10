@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentcube-router-auth
+  namespace: agentcube-system
+type: Opaque
+stringData:
+  # Generate with: openssl rand -hex 32
+  session-key: "changeme-generate-random-32-byte-hex-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentcube-router
+  namespace: agentcube-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agentcube-router
+  template:
+    metadata:
+      labels:
+        app: agentcube-router
+    spec:
+      serviceAccountName: agentcube-router
+      containers:
+      - name: router
+        image: volcano-sh/agentcube-router:latest
+        command:
+        - /agentcube-router
+        - --enable-auth=true
+        - --token-cache-size=10000
+        - --token-cache-ttl=5m
+        env:
+        - name: AGENTCUBE_SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: agentcube-router-auth
+              key: session-key
+        ports:
+        - containerPort: 8080
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+      # Workload Manager sidecar or separate deployment, depending on setup
